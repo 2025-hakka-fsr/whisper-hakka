@@ -1,16 +1,16 @@
-torchrun --nproc_per_node=10 train/fine-tune_on_custom_dataset.py \
---model_name openai/whisper-base \
---language en \
+torchrun --nproc_per_node=1 train/fine-tune_on_custom_dataset.py \
+--model_name openai/whisper-tiny \
+--language chinese \
 --sampling_rate 16000 \
---num_proc 4 \
+--num_proc 1 \
 --train_strategy epoch \
---learning_rate 6.25e-6 \
---warmup 1000 \
---train_batchsize 64 \
---eval_batchsize 32 \
---gradient_accumulation_steps 1 \
---num_epochs 100 \
+--learning_rate 5e-5 \
+--warmup 50 \
+--train_batchsize 8 \
+--eval_batchsize 4 \
+--gradient_accumulation_steps 4 \
+--num_epochs 1 \
 --resume_from_ckpt None \
---output_dir op_dir_epoch-pinyin \
---train_datasets output_data-pinyin/train  \
---eval_datasets output_data-pinyin/dev
+--output_dir outputs/whisper-hakka-tiny \
+--train_datasets formatted_data_pinyin/train_dataset_sm  \
+--eval_datasets formatted_data_pinyin/eval_dataset_sm  \
