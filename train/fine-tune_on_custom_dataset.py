@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Union
 from datasets import DatasetDict, Audio, load_from_disk, concatenate_datasets
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from transformers import WhisperFeatureExtractor, WhisperTokenizer, WhisperProcessor, WhisperForConditionalGeneration, Seq2SeqTrainingArguments, Seq2SeqTrainer
+from peft import LoraConfig, get_peft_model
 
 #######################     ARGUMENT PARSING        #########################
 
@@ -124,6 +125,32 @@ parser.add_argument(
     default=[], 
     help='List of datasets to be used for evaluation.'
 )
+parser.add_argument(
+    '--use_lora', 
+    action='store_true', 
+    help='Enable LoRA (Low-Rank Adaptation) fine-tuning.'
+)
+parser.add_argument(
+    '--lora_r', 
+    type=int, 
+    required=False, 
+    default=32, 
+    help='LoRA rank parameter.'
+)
+parser.add_argument(
+    '--lora_alpha', 
+    type=int, 
+    required=False, 
+    default=64, 
+    help='LoRA alpha parameter.'
+)
+parser.add_argument(
+    '--lora_dropout', 
+    type=float, 
+    required=False, 
+    default=0.1, 
+    help='LoRA dropout parameter.'
+)
 
 args = parser.parse_args()
 
@@ -148,8 +175,16 @@ normalizer = BasicTextNormalizer()
 #############################       MODEL LOADING       #####################################
 
 feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name)
+print(f"Model {args.model_name} using language {args.language} loaded successfully.")
+
+# Initialize tokenizer and processor with explicit language and task
 tokenizer = WhisperTokenizer.from_pretrained(args.model_name, language=args.language, task="transcribe")
 processor = WhisperProcessor.from_pretrained(args.model_name, language=args.language, task="transcribe")
+
+# Ensure tokenizer has the correct language setting
+if hasattr(tokenizer, 'set_prefix_tokens'):
+    tokenizer.set_prefix_tokens(language=args.language, task="transcribe")
+
 model = WhisperForConditionalGeneration.from_pretrained(args.model_name)
 
 if model.config.decoder_start_token_id is None:
@@ -163,11 +198,43 @@ if freeze_encoder:
     model.model.encoder.gradient_checkpointing = False
 
 
+# Fix deprecated forced_decoder_ids warning and ensure proper language/task configuration
 model.config.forced_decoder_ids = None
 model.config.suppress_tokens = []
 
+# Set language and task explicitly to avoid warnings
+if args.language == "en":
+    # For English, use the language token
+    model.generation_config.language = args.language
+    model.generation_config.task = "transcribe"
+    # Set forced decoder ids for English
+    model.generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task="transcribe")
+    print(f"Configured model for English transcription with forced_decoder_ids: {model.generation_config.forced_decoder_ids}")
+else:
+    # For other languages
+    model.generation_config.language = args.language  
+    model.generation_config.task = "transcribe"
+    model.generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task="transcribe")
+    print(f"Configured model for {args.language} transcription with forced_decoder_ids: {model.generation_config.forced_decoder_ids}")
+
 if gradient_checkpointing:
     model.config.use_cache = False
+
+# LoRA Configuration
+if args.use_lora:
+    print("Configuring LoRA...")
+    lora_config = LoraConfig(
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        target_modules=["q_proj", "v_proj", "k_proj", "out_proj", "fc1", "fc2"],
+        lora_dropout=args.lora_dropout,
+        bias="none",
+    )
+    model = get_peft_model(model, lora_config)
+    print(f"LoRA enabled with r={args.lora_r}, alpha={args.lora_alpha}, dropout={args.lora_dropout}")
+    model.print_trainable_parameters()
+else:
+    print("Using full fine-tuning (no LoRA)")
 
 
 ############################        DATASET LOADING AND PREP        ##########################
@@ -252,6 +319,11 @@ class DataCollatorSpeechSeq2SeqWithPadding:
             labels = labels[:, 1:]
 
         batch["labels"] = labels
+        
+        # Add attention mask to avoid warnings
+        # For Whisper, we typically don't need attention masks for input_features
+        # but we add them for consistency and to avoid warnings
+        batch["attention_mask"] = torch.ones_like(batch["input_features"][:, :, 0])
 
         return batch
 
@@ -353,6 +425,12 @@ trainer = Seq2SeqTrainer(
     compute_metrics=compute_metrics,
     tokenizer=processor.feature_extractor,
 )
+
+# Set generation config on the trainer to ensure proper language handling
+trainer.model.generation_config.language = args.language
+trainer.model.generation_config.task = "transcribe"
+if hasattr(trainer.model.generation_config, 'forced_decoder_ids'):
+    trainer.model.generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.language, task="transcribe")
 
 processor.save_pretrained(training_args.output_dir)
 
