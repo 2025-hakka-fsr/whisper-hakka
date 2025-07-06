@@ -66,8 +66,8 @@ def main(args):
         os.system(f"cp {ckpt_dir_parent}/added_tokens.json {ckpt_dir_parent}/normalizer.json \
         {ckpt_dir_parent}/preprocessor_config.json {ckpt_dir_parent}/special_tokens_map.json \
         {ckpt_dir_parent}/tokenizer_config.json {ckpt_dir_parent}/merges.txt \
-        {ckpt_dir_parent}/vocab.json {args.ckpt_dir}/config.json {args.ckpt_dir}/pytorch_model.bin \
-        {args.ckpt_dir}/training_args.bin {args.temp_ckpt_folder}")
+        {ckpt_dir_parent}/vocab.json {args.ckpt_dir}/config.json {args.ckpt_dir}/training_args.bin \
+        {args.ckpt_dir}/model.safetensors {args.temp_ckpt_folder}")
         model_id = args.temp_ckpt_folder
     else:
         model_id = args.hf_model
